@@ -1,0 +1,19 @@
+[project]
+name = "comic-inventory"
+version = "0.1.0"
+description = "Multi-channel comic book inventory (eBay, Shopify) on Postgres"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "psycopg2-binary (>=2.9.10)",
+]
+
+[project.scripts]
+inventory-migrate = "comic_inventory.migrate:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{ include = "comic_inventory", from = "src" }]
