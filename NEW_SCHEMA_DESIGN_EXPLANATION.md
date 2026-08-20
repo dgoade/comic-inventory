@@ -62,7 +62,7 @@ This cleanly separates:
 | `publishers` | Marvel, DC, Image… | `comics.publishing_company` |
 | `series` | Amazing Spider-Man vol 2 | **`comics.title`** is the series name. **`comics.series`** is the run (`1`/`2`/`3`) → `series.volume`. Do **not** use `comics.volume` as the catalog volume (it is noisy DC 33–46 / `-`). |
 | `issues` | #300, Annual 1, etc. | `comics.number` + publish date/year/month + cover_price |
-| `creators` + `issue_creators` | Writer / Art / Inks / Colors | Free-text `writer`, `art`, `inks`, `colors` (not in the first ETL) |
+| `creators` + `issue_creators` | Writer / penciller / inker / colorist / cover | `writer` → writer; `art` → penciller; `inks` → inker (if `inks` empty, copy penciller); `colors` → colorist (includes houses like Digital Chameleon). Cover artists parsed from `comments` (`Cover by X`, `X cover`) — not a general split of comments. Split lists on comma/`&`/`/`; keep `Jr.`/`Sr.` as one name. Unique on `lower(creators.name)`. |
 | `variants` | Cover A, 1:25, Newsstand… | First ETL uses a single `'Standard'` variant. `comics.copy` is a **copy number** (`1`/`2`/`3`) → `inventory_items.copy_label`. Do not use GoCollect `variant_description` (unsafe join). |
 | `variant_guide_values` | NM/VF/F/VG/G/Fair guide prices | `comics.near_mint_value` and siblings |
 
@@ -146,11 +146,11 @@ Hard reserve (on list) or soft reserve (on paid order) both work. Pick one in th
 1. Create the `inventory` schema with `poetry run inventory-migrate up` (session-mode connection — not the transaction pooler). **Done.**
 2. Load `public.comics` into `inventory.staging_legacy_comics`.
 3. ETL via `poetry run inventory-etl run` (**done** for the first load):
-   - Upsert publishers / series / issues / Standard variants (not creators)
+   - Upsert publishers / series / issues / Standard variants / creators / issue_creators
    - Put legacy NM/VF/… values onto `variant_guide_values`
    - One `inventory_items` row per legacy comic, **set `legacy_id`**
    - Map `public.comics_gocollect_fmv` → `inventory_fmv`
-   - Creators, GoCollect variant names, and eBay solds are **not** in this pass
+   - GoCollect variant names and eBay solds are **not** in this pass
 4. Leave legacy app on `public`. It does **not** need `search_path` changes.
 5. New scripts use `SET search_path TO inventory, public` (or qualified names).
 6. Re-run `inventory-etl run` during dual-run. It does not overwrite `status` / quantities.

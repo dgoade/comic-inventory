@@ -10,10 +10,12 @@ New design lives in schema `inventory`.
 
 - `0001_inventory_schema` **applied** on Supabase.
 - `0002_row_level_security` **applied** on Supabase.
+- `0003_creators_name_lower` **applied** on Supabase.
+- `0004_issue_list_view` — `inventory.issue_list` (one row per issue; comma-separated `legacy_id` / `grade` when an issue has multiple copies).
 - RLS is implemented for security only. Most migration work will be done using DATABASE_URL / psycopg2 login.
 - `inventory.operators` is empty — insert the owner’s `auth.users` id before using PostgREST / supabase-js.
 - `inventory.sales_channels` is empty.
-- **ETL applied.** `poetry run inventory-etl run` loaded 5,396 `inventory_items` (`legacy_id` = `public.comics.id`) and 2,402 `inventory_fmv` rows from `public.comics_gocollect_fmv`. Catalog: 59 publishers, 922 series, 5,233 issues / Standard variants. Staging is a snapshot, not a live view.
+- **ETL applied.** `poetry run inventory-etl run` loads copies (`legacy_id` = `public.comics.id`), FMV, catalog, and issue credits. Staging is a snapshot, not a live view.
 - Legacy `public.comics` is still the live collection. Dual-run: re-run `inventory-etl run` to refresh. It does **not** overwrite `status` / `quantity` / `reserved_quantity`.
 - Legacy psycopg2 app still talks to `public`. It does **not** need `search_path` changes.
 - Image scanning has not started (zero photos).
@@ -36,7 +38,9 @@ Do not use the original design-doc mapping for these four columns:
 | `volume` | Noisy extra numbering (DC 33–46, `-` on most rows) | staging only — **not** the catalog key |
 | `copy` | Copy number (`1`/`2`/`3`), not Cover A | `inventory_items.copy_label` |
 
-Catalog identity is `(publishing_company, title, series-field, number)`. Every imported variant is named `Standard`. GoCollect `variant_description` is not safe (33k rows, one comic has 28k matches). Creators are not imported yet.
+Catalog identity is `(publishing_company, title, series-field, number)`. Every imported variant is named `Standard`. GoCollect `variant_description` is not safe (33k rows, one comic has 28k matches).
+
+Credits hang on the **issue**: `writer` → writer, `art` → penciller, `inks` → inker, `colors` → colorist. Empty `inks` means the penciller also inked. Cover artists are parsed from `comments` (not the whole comments field as names). Split commas / `&` / `/`, but keep `Jr.`/`Sr.` as one person. `creators.name` is unique on `lower(name)` (`0003`).
 
 Refresh: `poetry run inventory-etl status` / `run`. Mappers live in `legacy_map.py` (unit-tested); SQL in `etl.py` must stay in sync. `F` = Fair, `FN` = Fine. `location_code` comes from `comics.box` only — do not use `newbox`.
 
@@ -118,7 +122,6 @@ A single demand score starves high-value books that were never listed.
 - Auto-writing `stock_movements` via trigger
 - Alembic
 - Multi-user tenancy (operators allow-list is enough)
-- Creators / `issue_creators`
 - GoCollect variant names (unsafe join on `gocollect_items`)
 
 ## Git / this file

@@ -12,7 +12,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+from psycopg2.extras import execute_values
+
 from comic_inventory.db import connect
+from comic_inventory.legacy_map import extract_cover_names
 
 # Keep in sync with comic_inventory.legacy_map.
 SQL_ISSUE_NUMBER = """
@@ -104,10 +107,14 @@ SELECT
     (SELECT count(*) FROM inventory.series WHERE deleted_at IS NULL) AS series,
     (SELECT count(*) FROM inventory.issues WHERE deleted_at IS NULL) AS issues,
     (SELECT count(*) FROM inventory.variants WHERE deleted_at IS NULL) AS variants,
+    (SELECT count(*) FROM inventory.creators) AS creators,
+    (SELECT count(*) FROM inventory.issue_creators) AS issue_creators,
     (SELECT count(*) FROM inventory.inventory_items WHERE deleted_at IS NULL) AS items,
     (SELECT count(*) FROM inventory.inventory_fmv) AS fmv,
     (SELECT count(*) FROM public.comics_gocollect_fmv) AS source_fmv
 """
+
+ETL_ROLES = ("writer", "penciller", "inker", "colorist", "cover")
 
 
 def _set_search_path(cur) -> None:
@@ -118,6 +125,143 @@ def load_staging(cur) -> int:
     cur.execute(LOAD_STAGING_SQL)
     cur.execute("SELECT count(*) FROM inventory.staging_legacy_comics")
     return cur.fetchone()[0]
+
+
+def _issue_from_staging() -> str:
+    return f"""
+        FROM inventory.staging_legacy_comics s
+        JOIN inventory.publishers p ON p.name = btrim(s.publishing_company)
+        JOIN inventory.series ser
+          ON ser.publisher_id = p.id
+         AND ser.name = btrim(s.title)
+         AND ser.volume = {SQL_VOLUME}
+        JOIN inventory.issues iss
+          ON iss.series_id = ser.id
+         AND iss.number = {SQL_ISSUE_NUMBER}
+    """
+
+
+def _split_column(column: str) -> str:
+    return f"""
+        regexp_split_to_table(
+            replace(replace(
+                regexp_replace(
+                    coalesce(s.{column}, ''),
+                    ',\\s*(Jr\\.?|Sr\\.?|III|II|IV)\\y',
+                    ' \\1',
+                    'gi'
+                ),
+                '&', ','),
+                '/', ','),
+            '\\s*,\\s*'
+        )
+    """
+
+
+def _credit_insert_sql(column: str, role: str, extra_where: str = "") -> str:
+    where = extra_where.strip()
+    if where and not where.upper().startswith("AND"):
+        where = "AND " + where
+    return f"""
+        INSERT INTO etl_credits (issue_id, role, name)
+        SELECT iss.id, '{role}', regexp_replace(btrim(part), '\\s+', ' ', 'g')
+        {_issue_from_staging()}
+        CROSS JOIN LATERAL {_split_column(column)} AS part
+        WHERE btrim(part) <> ''
+          AND btrim(part) <> '-'
+          {where}
+    """
+
+
+def transform_creators(cur) -> None:
+    cur.execute(
+        """
+        CREATE TEMP TABLE etl_credits (
+            issue_id uuid NOT NULL,
+            role     text NOT NULL,
+            name     text NOT NULL
+        ) ON COMMIT DROP
+        """
+    )
+    cur.execute(_credit_insert_sql("writer", "writer"))
+    cur.execute(_credit_insert_sql("art", "penciller"))
+    cur.execute(
+        _credit_insert_sql(
+            "inks",
+            "inker",
+            "(s.inks IS NOT NULL AND btrim(s.inks) NOT IN ('', '-'))",
+        )
+    )
+    cur.execute(
+        _credit_insert_sql(
+            "art",
+            "inker",
+            "(s.inks IS NULL OR btrim(s.inks) IN ('', '-'))",
+        )
+    )
+    cur.execute(_credit_insert_sql("colors", "colorist"))
+
+    cur.execute(
+        f"""
+        SELECT DISTINCT iss.id, s.comments
+        {_issue_from_staging()}
+        WHERE s.comments IS NOT NULL
+          AND s.comments ~* 'cover'
+        """
+    )
+    cover_rows = []
+    for issue_id, comments in cur.fetchall():
+        for name in extract_cover_names(comments):
+            cover_rows.append((issue_id, "cover", name))
+    if cover_rows:
+        execute_values(
+            cur,
+            "INSERT INTO etl_credits (issue_id, role, name) VALUES %s",
+            cover_rows,
+        )
+
+    cur.execute(
+        """
+        INSERT INTO inventory.creators (name)
+        SELECT name
+        FROM (
+            SELECT name,
+                   row_number() OVER (
+                       PARTITION BY lower(name)
+                       ORDER BY cnt DESC, name
+                   ) AS rn
+            FROM (
+                SELECT name, count(*) AS cnt
+                FROM etl_credits
+                GROUP BY name
+            ) t
+        ) x
+        WHERE rn = 1
+        ON CONFLICT ((lower(name))) DO NOTHING
+        """
+    )
+
+    cur.execute(
+        f"""
+        DELETE FROM inventory.issue_creators ic
+        WHERE ic.role IN %s
+          AND ic.issue_id IN (
+              SELECT iss.id
+              {_issue_from_staging()}
+          )
+        """,
+        (ETL_ROLES,),
+    )
+
+    cur.execute(
+        """
+        INSERT INTO inventory.issue_creators (issue_id, creator_id, role)
+        SELECT DISTINCT c.issue_id, cr.id, c.role
+        FROM etl_credits c
+        JOIN inventory.creators cr ON lower(cr.name) = lower(c.name)
+        ON CONFLICT DO NOTHING
+        """
+    )
 
 
 def transform(cur) -> None:
@@ -226,6 +370,8 @@ def transform(cur) -> None:
             updated_at = now()
         """
     )
+
+    transform_creators(cur)
 
     cur.execute(
         f"""
@@ -364,6 +510,31 @@ def gather_report(cur) -> dict:
     )
     fmv_not_landed = cur.fetchone()[0]
 
+    cur.execute(
+        """
+        SELECT count(*)
+        FROM inventory.issues iss
+        WHERE iss.deleted_at IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM inventory.issue_creators ic
+              WHERE ic.issue_id = iss.id
+                AND ic.role = 'writer'
+          )
+        """
+    )
+    issues_without_writer = cur.fetchone()[0]
+
+    cur.execute(
+        """
+        SELECT count(*)
+        FROM inventory.staging_legacy_comics
+        WHERE writer IS NOT NULL
+          AND btrim(writer) NOT IN ('', '-')
+        """
+    )
+    staging_with_writer = cur.fetchone()[0]
+
     errors: list[str] = []
     if counts["items"] != counts["comics"]:
         errors.append(
@@ -377,6 +548,8 @@ def gather_report(cur) -> dict:
         errors.append(f"{fmv_not_landed} comics_gocollect_fmv rows did not land")
     if unmapped_grades:
         errors.append(f"unmapped grades: {unmapped_grades}")
+    if staging_with_writer and counts["issue_creators"] == 0:
+        errors.append("staging has writers but issue_creators is empty")
 
     return {
         "counts": counts,
@@ -384,6 +557,7 @@ def gather_report(cur) -> dict:
         "staging_without_item": staging_without_item,
         "items_missing_variant": items_missing_variant,
         "fmv_not_landed": fmv_not_landed,
+        "issues_without_writer": issues_without_writer,
         "errors": errors,
     }
 
@@ -398,6 +572,8 @@ def print_report(report: dict) -> None:
     print(f"{'series':<22} {c['series']}")
     print(f"{'issues':<22} {c['issues']}")
     print(f"{'variants':<22} {c['variants']}")
+    print(f"{'creators':<22} {c['creators']}")
+    print(f"{'issue_creators':<22} {c['issue_creators']}")
     print(f"{'inventory_items':<22} {c['items']}")
     print(f"{'inventory_fmv':<22} {c['fmv']}")
     print(f"{'source fmv':<22} {c['source_fmv']}")
@@ -406,6 +582,7 @@ def print_report(report: dict) -> None:
     print(f"staging without item: {report['staging_without_item']}")
     print(f"items missing variant: {report['items_missing_variant']}")
     print(f"fmv not landed: {report['fmv_not_landed']}")
+    print(f"issues without writer: {report['issues_without_writer']}")
     if report["errors"]:
         print("ERRORS:")
         for err in report["errors"]:
