@@ -49,6 +49,7 @@ Refresh: `poetry run inventory-etl status` / `run`. Mappers live in `legacy_map.
 - Python 3.12 + Poetry 2.2. IntelliJ Ultimate (Python plugin). Not PyCharm menus.
 - Migrations: numbered SQL + `poetry run inventory-migrate` (psycopg2). **Not Alembic / SQLAlchemy.**
 - ETL: `poetry run inventory-etl` (psycopg2). Not a numbered migration. Re-runnable.
+- Backups: `poetry run inventory-backup` (`pg_dump --schema=inventory --data-only`). Not a migration. Does not dump `public`.
 - New files: `migrations/0003_whatever.sql`. Never edit an already-applied file.
 - Connection: session-mode pooler or direct (**port 5432**). **Never run DDL through transaction pooler `:6543`.** `migrate.py` refuses `:6543`.
 - Mac is IPv4-only; that is why the pooler is used. Session-mode on the pooler host is the right DDL path.

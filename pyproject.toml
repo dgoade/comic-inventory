@@ -11,6 +11,7 @@ dependencies = [
 [project.scripts]
 inventory-migrate = "comic_inventory.migrate:main"
 inventory-etl = "comic_inventory.etl:main"
+inventory-backup = "comic_inventory.backup:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

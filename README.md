@@ -39,3 +39,20 @@ poetry run inventory-etl load             # staging snapshot only
 ```bash
 poetry run pytest
 ```
+
+## Backup (`inventory` data only)
+
+Does not dump `public` (legacy comics). Needs `pg_dump` on `PATH`.
+
+```bash
+poetry run inventory-backup              # backups/inventory-YYYYMMDD-HHMMSS.dump
+poetry run inventory-backup --sql        # plain INSERT SQL
+poetry run inventory-backup --out path.dump
+```
+
+Restore onto a schema created by `inventory-migrate up`:
+
+```bash
+pg_restore --data-only --disable-triggers --no-owner --schema=inventory \
+  -d "$DATABASE_URL" backups/inventory-YYYYMMDD-HHMMSS.dump
+```
