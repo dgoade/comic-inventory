@@ -60,13 +60,13 @@ This cleanly separates:
 | New Table | Purpose | Maps from legacy |
 |-----------|---------|------------------|
 | `publishers` | Marvel, DC, Image… | `comics.publishing_company` |
-| `series` | Amazing Spider-Man Vol 1 | `comics.series` + `volume` + `title` (partially) |
+| `series` | Amazing Spider-Man vol 2 | **`comics.title`** is the series name. **`comics.series`** is the run (`1`/`2`/`3`) → `series.volume`. Do **not** use `comics.volume` as the catalog volume (it is noisy DC 33–46 / `-`). |
 | `issues` | #300, Annual 1, etc. | `comics.number` + publish date/year/month + cover_price |
-| `creators` + `issue_creators` | Writer / Art / Inks / Colors | Free-text `writer`, `art`, `inks`, `colors` |
-| `variants` | Cover A, 1:25, Newsstand… | `comics.copy` + GoCollect `variant_description` |
+| `creators` + `issue_creators` | Writer / Art / Inks / Colors | Free-text `writer`, `art`, `inks`, `colors` (not in the first ETL) |
+| `variants` | Cover A, 1:25, Newsstand… | First ETL uses a single `'Standard'` variant. `comics.copy` is a **copy number** (`1`/`2`/`3`) → `inventory_items.copy_label`. Do not use GoCollect `variant_description` (unsafe join). |
 | `variant_guide_values` | NM/VF/F/VG/G/Fair guide prices | `comics.near_mint_value` and siblings |
 
-**ETL note:** `issues` is unique on `(series_id, number)`. Normalize `"1"`, `"#1"`, and `"01"` to the same value or you will get duplicates.
+**ETL note:** `issues` is unique on `(series_id, number)`. Normalize `"1"`, `"#1"`, and `"01"` to the same value or you will get duplicates. Missing `series.volume` is stored as `''` (not NULL) so `UNIQUE (publisher_id, name, volume)` cannot insert two “no volume” rows.
 
 ### Physical Inventory
 
@@ -75,10 +75,11 @@ This cleanly separates:
 Key fields:
 - `legacy_id` (unique) — `public.comics.id` so ETL and dual-run always have a map back
 - `variant_id` — catalog link
+- `copy_label` — `comics.copy` (copy number `1`/`2`/`3`, not a variant name)
 - **Grading (do not force both styles)**
   - Raw: `grade_scale = 'raw'` + `grade` (Overstreet label)
   - Slabbed: `grade_scale` + `grade_numeric` + `certification_number`
-- `location_code` — replaces `box` / `newbox`
+- `location_code` — `comics.box` only (do not use `newbox`)
 - `purchase_price` — cost of *this* copy
 - Current market value for this copy/grade lives in **`inventory_fmv`**, not six guide columns on the row
 - `status` is **physical only**: `in_stock`, `reserved`, `sold`, `damaged`, `lost`, `returned`, `archived`
@@ -142,16 +143,17 @@ Hard reserve (on list) or soft reserve (on paid order) both work. Pick one in th
 
 ## 5. How the Migration Would Look (high level)
 
-1. Create the `inventory` schema (SQL Editor or session-mode connection — not the transaction pooler).
+1. Create the `inventory` schema with `poetry run inventory-migrate up` (session-mode connection — not the transaction pooler). **Done.**
 2. Load `public.comics` into `inventory.staging_legacy_comics`.
-3. ETL:
-   - Upsert publishers / series / issues / variants / creators
+3. ETL via `poetry run inventory-etl run` (**done** for the first load):
+   - Upsert publishers / series / issues / Standard variants (not creators)
    - Put legacy NM/VF/… values onto `variant_guide_values`
    - One `inventory_items` row per legacy comic, **set `legacy_id`**
-   - Map GoCollect FMV → `inventory_fmv`
-   - Optionally map old eBay solds → `market_items`
+   - Map `public.comics_gocollect_fmv` → `inventory_fmv`
+   - Creators, GoCollect variant names, and eBay solds are **not** in this pass
 4. Leave legacy app on `public`. It does **not** need `search_path` changes.
 5. New scripts use `SET search_path TO inventory, public` (or qualified names).
+6. Re-run `inventory-etl run` during dual-run. It does not overwrite `status` / quantities.
 
 Compatibility view if you want a flat UI later:
 
@@ -256,7 +258,9 @@ Migrations are **numbered SQL files + a small psycopg2 runner** (Alembic-like, n
 
 ```
 src/comic_inventory/migrate.py
+src/comic_inventory/etl.py
 migrations/0001_inventory_schema.sql
+migrations/0002_row_level_security.sql
 ```
 
 The runner records applied versions in `public.schema_migrations` and applies each file in its own transaction.
@@ -264,15 +268,16 @@ The runner records applied versions in `public.schema_migrations` and applies ea
 ```bash
 # Session-mode pooler (port 5432) or direct — NOT :6543
 export DATABASE_URL='postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require'
-pip install psycopg2-binary
 poetry run inventory-migrate status
 poetry run inventory-migrate up
+poetry run inventory-etl status
+poetry run inventory-etl run
 ```
 
 Rules:
-- New changes go in `artifacts/migrations/0002_whatever.sql`, never by editing an already-applied file.
-- `new_inventory_schema.sql` is the readable one-shot copy. `0001` is what `migrate.py` applies.
-- **Do not** add `inventory` to Exposed schemas until RLS exists.
+- New schema changes go in `migrations/0003_whatever.sql`, never by editing an already-applied file.
+- ETL is `poetry run inventory-etl`, not a numbered migration.
+- **Do not** add `inventory` to Exposed schemas until an `inventory.operators` row exists.
 - New app/ETL: `SET search_path TO inventory, public;` or qualified names.
 - Legacy psycopg2 code keeps using `public` with no change.
 
@@ -305,7 +310,6 @@ inventory.Staging
 - Listing sync fields (`last_synced_at`, `sync_status`)
 - Item-level fee/profit columns
 - Auto-writing `stock_movements` via trigger
-- RLS / PostgREST exposure
 - Alembic (replaced by poetry run inventory-migrate)
 
 ---
@@ -313,8 +317,8 @@ inventory.Staging
 ## 10. Suggested Stand-up Sequence
 
 1. Review this tightened SQL (done).
-2. Create `inventory` with `poetry run inventory-migrate up` (session-mode connection).
-3. ETL catalog + `inventory_items` (set `legacy_id`) + FMV. Old app stays on `public`.
+2. Create `inventory` with `poetry run inventory-migrate up` (session-mode connection). (done)
+3. ETL catalog + `inventory_items` (set `legacy_id`) + FMV. Old app stays on `public`. (done — `poetry run inventory-etl run`)
 4. Images + scan queue.
 5. Listings / orders when you sell on two channels.
 

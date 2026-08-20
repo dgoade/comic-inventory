@@ -10,6 +10,7 @@ dependencies = [
 
 [project.scripts]
 inventory-migrate = "comic_inventory.migrate:main"
+inventory-etl = "comic_inventory.etl:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]
@@ -17,3 +18,9 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 packages = [{ include = "comic_inventory", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

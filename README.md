@@ -24,3 +24,18 @@ poetry run inventory-migrate up
 ```
 
 Use a session-mode or direct connection, not the transaction pooler (`:6543`).
+
+## ETL (legacy `public.comics` → `inventory`)
+
+Does not write `public.comics`. Re-runnable.
+
+```bash
+poetry run inventory-etl status
+poetry run inventory-etl run              # load staging + upsert catalog/items/FMV
+poetry run inventory-etl run --skip-load  # transform existing staging only
+poetry run inventory-etl load             # staging snapshot only
+```
+
+```bash
+poetry run pytest
+```

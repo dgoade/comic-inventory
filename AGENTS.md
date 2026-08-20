@@ -6,38 +6,45 @@ Canonical repo: https://github.com/dgoade/comic-inventory
 Legacy data lives in the same Supabase project, schema `public`.
 New design lives in schema `inventory`.
 
-Copy this file into the repo root as `AGENTS.md` (or merge if you already have one).
-
 ## Current state (as of 2026-08-19)
 
 - `0001_inventory_schema` **applied** on Supabase.
 - `0002_row_level_security` **applied** on Supabase.
-- RLS is implemented for security only. Most migration work will be done using DATABASE_URL / psycopg2 login. 
+- RLS is implemented for security only. Most migration work will be done using DATABASE_URL / psycopg2 login.
 - `inventory.operators` is empty — insert the owner’s `auth.users` id before using PostgREST / supabase-js.
 - `inventory.sales_channels` is empty.
-- **No ETL yet.** `inventory` tables are empty (except operators / empty catalogs). Legacy `public.comics` is still the live collection.
+- **ETL applied.** `poetry run inventory-etl run` loaded 5,396 `inventory_items` (`legacy_id` = `public.comics.id`) and 2,402 `inventory_fmv` rows from `public.comics_gocollect_fmv`. Catalog: 59 publishers, 922 series, 5,233 issues / Standard variants. Staging is a snapshot, not a live view.
+- Legacy `public.comics` is still the live collection. Dual-run: re-run `inventory-etl run` to refresh. It does **not** overwrite `status` / `quantity` / `reserved_quantity`.
 - Legacy psycopg2 app still talks to `public`. It does **not** need `search_path` changes.
 - Image scanning has not started (zero photos).
 - YouTube / content layer was designed then **removed**. Do not add it back unless asked.
 
 ## Next step
 
-ETL `public.comics` → `inventory`:
-
-1. Load into `inventory.staging_legacy_comics`.
-2. Upsert publishers / series / issues / variants (normalize issue numbers: `"1"`, `"#1"`, `"01"` → one value).
-3. Put legacy NM/VF/F/VG/G/Fair guide prices on `variant_guide_values` (not on the copy).
-4. One `inventory_items` row per legacy comic. Set **`legacy_id`** = `public.comics.id`.
-5. Map GoCollect FMV → `inventory_fmv` if straightforward.
-
-Then: images + dual scan queues. Then listings/orders when selling on two channels.
+Images + dual scan queues. Then listings/orders when selling on two channels.
 
 Do **not** morph `public.comics` in place. Dual-run until the new app is ready.
+
+### Legacy column meanings (verified against live `public.comics`)
+
+Do not use the original design-doc mapping for these four columns:
+
+| Legacy column | Actual meaning | Inventory target |
+|---------------|----------------|------------------|
+| `title` | Series name (`Batman`, `Amazing Spider-Man`) | `series.name` |
+| `series` | Run / volume (`1`/`2`/`3`) | `series.volume` (`'-'`/null/blank → `''` so UNIQUE cannot double-insert NULLs) |
+| `volume` | Noisy extra numbering (DC 33–46, `-` on most rows) | staging only — **not** the catalog key |
+| `copy` | Copy number (`1`/`2`/`3`), not Cover A | `inventory_items.copy_label` |
+
+Catalog identity is `(publishing_company, title, series-field, number)`. Every imported variant is named `Standard`. GoCollect `variant_description` is not safe (33k rows, one comic has 28k matches). Creators are not imported yet.
+
+Refresh: `poetry run inventory-etl status` / `run`. Mappers live in `legacy_map.py` (unit-tested); SQL in `etl.py` must stay in sync. `F` = Fair, `FN` = Fine. `location_code` comes from `comics.box` only — do not use `newbox`.
 
 ## Stack
 
 - Python 3.12 + Poetry 2.2. IntelliJ Ultimate (Python plugin). Not PyCharm menus.
 - Migrations: numbered SQL + `poetry run inventory-migrate` (psycopg2). **Not Alembic / SQLAlchemy.**
+- ETL: `poetry run inventory-etl` (psycopg2). Not a numbered migration. Re-runnable.
 - New files: `migrations/0003_whatever.sql`. Never edit an already-applied file.
 - Connection: session-mode pooler or direct (**port 5432**). **Never run DDL through transaction pooler `:6543`.** `migrate.py` refuses `:6543`.
 - Mac is IPv4-only; that is why the pooler is used. Session-mode on the pooler host is the right DDL path.
@@ -111,6 +118,8 @@ A single demand score starves high-value books that were never listed.
 - Auto-writing `stock_movements` via trigger
 - Alembic
 - Multi-user tenancy (operators allow-list is enough)
+- Creators / `issue_creators`
+- GoCollect variant names (unsafe join on `gocollect_items`)
 
 ## Git / this file
 
