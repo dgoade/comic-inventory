@@ -411,9 +411,25 @@ def transform(cur) -> None:
         ON CONFLICT (legacy_id) DO UPDATE
         SET variant_id = EXCLUDED.variant_id,
             copy_label = EXCLUDED.copy_label,
-            grade_scale = EXCLUDED.grade_scale,
-            grade = EXCLUDED.grade,
-            grading_comments = EXCLUDED.grading_comments,
+            -- Slabbed copies (CGC/etc or a cert #) keep operator-owned grade fields.
+            grade_scale = CASE
+                WHEN inventory_items.grade_scale IS DISTINCT FROM 'raw'
+                  OR inventory_items.certification_number IS NOT NULL
+                THEN inventory_items.grade_scale
+                ELSE EXCLUDED.grade_scale
+            END,
+            grade = CASE
+                WHEN inventory_items.grade_scale IS DISTINCT FROM 'raw'
+                  OR inventory_items.certification_number IS NOT NULL
+                THEN inventory_items.grade
+                ELSE EXCLUDED.grade
+            END,
+            grading_comments = CASE
+                WHEN inventory_items.grade_scale IS DISTINCT FROM 'raw'
+                  OR inventory_items.certification_number IS NOT NULL
+                THEN inventory_items.grading_comments
+                ELSE EXCLUDED.grading_comments
+            END,
             notes = EXCLUDED.notes,
             location_code = EXCLUDED.location_code,
             purchase_price = EXCLUDED.purchase_price,
@@ -436,6 +452,13 @@ def transform(cur) -> None:
             closest_grade = EXCLUDED.closest_grade,
             fmv = EXCLUDED.fmv,
             updated_at = now()
+        WHERE EXISTS (
+            SELECT 1
+            FROM inventory.inventory_items i
+            WHERE i.id = inventory_fmv.inventory_item_id
+              AND i.grade_scale = 'raw'
+              AND i.certification_number IS NULL
+        )
         """
     )
 
@@ -445,6 +468,8 @@ def transform(cur) -> None:
         USING inventory.inventory_items i
         WHERE fmv.inventory_item_id = i.id
           AND i.legacy_id IS NOT NULL
+          AND i.grade_scale = 'raw'
+          AND i.certification_number IS NULL
           AND NOT EXISTS (
               SELECT 1
               FROM public.comics_gocollect_fmv f
@@ -535,6 +560,19 @@ def gather_report(cur) -> dict:
     )
     staging_with_writer = cur.fetchone()[0]
 
+    cur.execute(
+        """
+        SELECT count(*)
+        FROM inventory.inventory_items
+        WHERE deleted_at IS NULL
+          AND (
+              grade_scale IS DISTINCT FROM 'raw'
+              OR certification_number IS NOT NULL
+          )
+        """
+    )
+    slabbed_protected = cur.fetchone()[0]
+
     errors: list[str] = []
     if counts["items"] != counts["comics"]:
         errors.append(
@@ -558,6 +596,7 @@ def gather_report(cur) -> dict:
         "items_missing_variant": items_missing_variant,
         "fmv_not_landed": fmv_not_landed,
         "issues_without_writer": issues_without_writer,
+        "slabbed_protected": slabbed_protected,
         "errors": errors,
     }
 
@@ -583,6 +622,7 @@ def print_report(report: dict) -> None:
     print(f"items missing variant: {report['items_missing_variant']}")
     print(f"fmv not landed: {report['fmv_not_landed']}")
     print(f"issues without writer: {report['issues_without_writer']}")
+    print(f"slabbed grades kept: {report['slabbed_protected']}")
     if report["errors"]:
         print("ERRORS:")
         for err in report["errors"]:

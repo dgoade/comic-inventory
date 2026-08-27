@@ -153,7 +153,7 @@ Hard reserve (on list) or soft reserve (on paid order) both work. Pick one in th
    - GoCollect variant names and eBay solds are **not** in this pass
 4. Leave legacy app on `public`. It does **not** need `search_path` changes.
 5. New scripts use `SET search_path TO inventory, public` (or qualified names).
-6. Re-run `inventory-etl run` during dual-run. It does not overwrite `status` / quantities.
+6. Re-run `inventory-etl run` during dual-run. It does not overwrite `status` / quantities. It does not overwrite grade fields or `inventory_fmv` on copies that are not raw (`grade_scale <> 'raw'` or a certification number).
 
 Compatibility view if you want a flat UI later:
 

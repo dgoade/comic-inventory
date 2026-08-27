@@ -16,7 +16,7 @@ New design lives in schema `inventory`.
 - `inventory.operators` is empty — insert the owner’s `auth.users` id before using PostgREST / supabase-js.
 - `inventory.sales_channels` is empty.
 - **ETL applied.** `poetry run inventory-etl run` loads copies (`legacy_id` = `public.comics.id`), FMV, catalog, and issue credits. Staging is a snapshot, not a live view.
-- Legacy `public.comics` is still the live collection. Dual-run: re-run `inventory-etl run` to refresh. It does **not** overwrite `status` / `quantity` / `reserved_quantity`.
+- Legacy `public.comics` is still the live collection. Dual-run: re-run `inventory-etl run` to refresh. It does **not** overwrite `status` / `quantity` / `reserved_quantity`. It does **not** overwrite grade or `inventory_fmv` when `grade_scale <> 'raw'` or `certification_number` is set (CGC/PGX/CBCS/CSG).
 - Legacy psycopg2 app still talks to `public`. It does **not** need `search_path` changes.
 - Image scanning has not started (zero photos).
 - YouTube / content layer was designed then **removed**. Do not add it back unless asked.

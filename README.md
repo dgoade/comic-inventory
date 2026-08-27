@@ -27,7 +27,7 @@ Use a session-mode or direct connection, not the transaction pooler (`:6543`).
 
 ## ETL (legacy `public.comics` → `inventory`)
 
-Does not write `public.comics`. Re-runnable.
+Does not write `public.comics`. Re-runnable. Does not overwrite CGC/slab grades or their FMV.
 
 ```bash
 poetry run inventory-etl status
