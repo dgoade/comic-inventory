@@ -11,7 +11,7 @@ New design lives in schema `inventory`.
 - `0001_inventory_schema` **applied** on Supabase.
 - `0002_row_level_security` **applied** on Supabase.
 - `0003_creators_name_lower` **applied** on Supabase.
-- `0004`–`0006` — `inventory.issue_list` (one row per issue; comma-separated `legacy_id` / `grade` / `location_code` / `fmv` when an issue has multiple copies). `location_code` is legacy `comics.box`. `fmv` is `inventory_fmv` for the copy.
+- `0004`–`0007` — `inventory.issue_list` (one row per issue; comma-separated `legacy_id` / `grade` / `location_code` / `fmv` when an issue has multiple copies). `location_code` is legacy `comics.box`. `fmv` is `inventory_fmv` for the copy. `grade` is Overstreet for raw copies and `cgc <numeric>` when `grade_scale = 'cgc'`.
 - RLS is implemented for security only. Most migration work will be done using DATABASE_URL / psycopg2 login.
 - `inventory.operators` is empty — insert the owner’s `auth.users` id before using PostgREST / supabase-js.
 - `inventory.sales_channels` is empty.
