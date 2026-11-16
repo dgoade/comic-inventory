@@ -6,12 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "psycopg2-binary (>=2.9.10)",
+    "python-dotenv (>=1.2.4,<2.0.0)",
 ]
 
 [project.scripts]
 inventory-migrate = "comic_inventory.migrate:main"
 inventory-etl = "comic_inventory.etl:main"
 inventory-backup = "comic_inventory.backup:main"
+inventory-cgc = "comic_inventory.cgc_cmd:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

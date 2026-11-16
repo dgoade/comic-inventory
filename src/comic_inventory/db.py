@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 def project_root() -> Path:
     here = Path(__file__).resolve()
@@ -13,6 +15,16 @@ def project_root() -> Path:
         if (candidate / "pyproject.toml").is_file() and (candidate / "migrations").is_dir():
             return candidate
     return here.parents[2]
+
+
+def load_project_env(path: Path | None = None) -> bool:
+    """Load KEY=value pairs from the project ``.env``.
+
+    Variables already set in the process environment are left unchanged.
+    A missing file is not an error.
+    """
+    env_file = project_root() / ".env" if path is None else path
+    return load_dotenv(env_file)
 
 
 def psycopg2():
@@ -24,11 +36,12 @@ def psycopg2():
 
 
 def load_database_url() -> str:
+    load_project_env()
     url = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
     if not url:
         sys.exit(
-            "Set DATABASE_URL (or SUPABASE_DB_URL) to a session-mode/direct "
-            "Postgres URL. Copy .env.example to .env and fill it in."
+            "Set DATABASE_URL (or SUPABASE_DB_URL) in the environment or in .env. "
+            "Copy .env.example to .env and fill it in."
         )
     if ":6543" in url.split("?")[0]:
         sys.exit(

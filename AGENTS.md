@@ -12,6 +12,7 @@ New design lives in schema `inventory`.
 - `0002_row_level_security` **applied** on Supabase.
 - `0003_creators_name_lower` **applied** on Supabase.
 - `0004`–`0008` — `inventory.issue_list` (one row per issue). `issue_id` is `issues.id`. Copy-level `legacy_id` / `grade` / `location_code` / `fmv` are comma-separated when an issue has multiple copies. `location_code` is legacy `comics.box`. `fmv` is `inventory_fmv` for the copy. `grade` is Overstreet for raw copies and `cgc <numeric>` when `grade_scale = 'cgc'`.
+- `0009_certification_number_unique` — one live copy per certification number. Apply with `poetry run inventory-migrate up` before `inventory-cgc prepare`.
 - RLS is implemented for security only. Most migration work will be done using DATABASE_URL / psycopg2 login.
 - `inventory.operators` is empty — insert the owner’s `auth.users` id before using PostgREST / supabase-js.
 - `inventory.sales_channels` is empty.
@@ -23,7 +24,7 @@ New design lives in schema `inventory`.
 
 ## Next step
 
-Images + dual scan queues. Then listings/orders when selling on two channels.
+Slabbed copies: `poetry run inventory-cgc show|prepare|publish` uploads local front and back photos into `inventory_images` and drafts an eBay `channel_listings` row. The commands do not call CGC. Publish is a separate command. It is the step that reserves the copy (`reserved_quantity = 1`, a `stock_movements` row of type `reserve`). Physical status stays `in_stock`. Raw books that CGC did not image still use the dual scan queues. Then orders when selling on two channels.
 
 Do **not** morph `public.comics` in place. Dual-run until the new app is ready.
 
@@ -53,7 +54,18 @@ Refresh: `poetry run inventory-etl status` / `run`. Mappers live in `legacy_map.
 - New files: `migrations/0003_whatever.sql`. Never edit an already-applied file.
 - Connection: session-mode pooler or direct (**port 5432**). **Never run DDL through transaction pooler `:6543`.** `migrate.py` refuses `:6543`.
 - Mac is IPv4-only; that is why the pooler is used. Session-mode on the pooler host is the right DDL path.
-- Secrets: env / `.env`. Never put API keys in `sales_channels.config` jsonb.
+- Secrets: env / `.env`. Never put API keys in `sales_channels.config` jsonb. CLI entry points load the project `.env` with `python-dotenv` (`load_project_env`). A variable already set in the process environment wins.
+- eBay refresh token is env only (`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`). Supabase Storage uses `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` for the public bucket `comic_images`. `inventory-cgc` does not call CGC.
+
+## CGC slabs on eBay
+
+`poetry run inventory-cgc show CERT --legacy-id ID --grade 9.8 --front PATH --back PATH` reads that inventory copy and the two local image files. No database writes and no CGC request.
+
+`poetry run inventory-cgc prepare CERT --legacy-id ID --price USD --grade 9.8 --front PATH --back PATH` binds that legacy id. It sets `grade_scale = 'cgc'`, `grade_numeric` from `--grade`, `certification_number`, and `grader`. It does not change `status`, `quantity`, `reserved_quantity`, `purchase_price`, `location_code`, or `inventory_fmv`. Series, issue, publisher, and year come from the inventory copy. Front and back files upload to the `comic_images` bucket at `{item_id}/01.jpg` and `02.jpg`. The primary-image trigger fills `primary_image_url`. A draft `channel_listings` row stores the price that was typed. FMV is printed as a hint and is not the price. Signed and restored stay false.
+
+`poetry run inventory-cgc publish CERT` is the only eBay call. It needs the three business-policy env ids. Missing ones leave the draft in place. On success the listing is `active` and the copy is reserved. There is no `status = 'listed'`.
+
+ETL already skips grade and FMV when `grade_scale <> 'raw'` or `certification_number` is set. Do not weaken that. The public cert page is behind Cloudflare. Do not scrape it.
 
 ## Schema rules (do not regress)
 

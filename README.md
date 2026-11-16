@@ -18,10 +18,11 @@ poetry install
 
 ```bash
 cp .env.example .env   # then edit DATABASE_URL
-set -a && source .env && set +a
 poetry run inventory-migrate status
 poetry run inventory-migrate up
 ```
+
+The Poetry commands load `.env` from the project root. A variable already set in the shell is left as it is. `pg_restore` below still reads `$DATABASE_URL` from the shell, so source the file for that command: `set -a && source .env && set +a`.
 
 Use a session-mode or direct connection, not the transaction pooler (`:6543`).
 
@@ -39,6 +40,20 @@ poetry run inventory-etl load             # staging snapshot only
 ```bash
 poetry run pytest
 ```
+
+## CGC slab on eBay
+
+Uses two local photos you downloaded and resized. The commands do not call CGC. `show` does not write. `prepare` uploads the photos and saves a draft. `publish` is the step that lists it and reserves the copy. Price and grade are whatever you pass. Price is not taken from FMV.
+
+```bash
+poetry run inventory-cgc show 4719983018 --legacy-id 123 --grade 9.8 \
+    --front front.jpg --back back.jpg
+poetry run inventory-cgc prepare 4719983018 --legacy-id 123 --price 25.00 --grade 9.8 \
+    --front front.jpg --back back.jpg
+poetry run inventory-cgc publish 4719983018
+```
+
+Apply `0009_certification_number_unique` first (`poetry run inventory-migrate up`). Storage and eBay keys live in `.env`. The command loads that file. See `.env.example`.
 
 ## Backup (`inventory` data only)
 
